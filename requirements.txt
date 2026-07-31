@@ -1,0 +1,5 @@
+psutil
+# numpy is not currently used by the noise implementation (plain Python
+# lists + random.gauss cover it) but is listed per the original spec in
+# case the per-transistor noise field moves to vectorized numpy later.
+numpy
