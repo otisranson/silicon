@@ -45,11 +45,11 @@ descendant of that idea (live-computed gate diagrams from real inputs,
 not canned animation) but stands on its own now, decoupled from CPU
 metrics entirely.
 
-**Note:** the local project directory and this file are named `Phosphor`,
-but the GitHub remote (`origin`) still points at
-`https://github.com/otisranson/silicon.git`, the pre-pivot repo name.
-Not renamed on GitHub yet — flag this to the user before assuming the
-remote name matches the project name.
+**Resolved (2026-08-04):** the GitHub repo was renamed
+`otisranson/silicon` → `otisranson/Phosphor`, and the local `origin`
+remote was repointed to `https://github.com/otisranson/Phosphor.git` to
+match. Local project directory, this file, and the GitHub repo name are
+now all consistent.
 
 ---
 
@@ -94,9 +94,15 @@ Phosphor/
   phase-based animation engine (`animate()`), and DOM wiring for the
   stack panel and expression input. **Not runtime-tested by Claude this
   session** — only read/analyzed, never opened in a browser.
-- [ ] Not yet committed/pushed since the pivot.
-- [ ] GitHub remote still named `silicon` — rename or repoint, pending
-  user decision.
+- [x] Pivot committed (`27e92bc`, 2026-08-04) and pushed to `origin/master`.
+- [x] GitHub repo renamed `otisranson/silicon` → `otisranson/Phosphor`;
+  local `origin` remote repointed to match.
+- [x] `screenshots/screenshot.png` added and linked from `README.md` —
+  shows a real run (`PUSH 3 · PUSH 8 · *` → `24`), which confirms
+  `phosphor.html` does actually run correctly in a browser (tokenizer,
+  postfix conversion, gate animation, and stack rendering all visibly
+  working). Only one example run confirmed this way, not the edge cases
+  in Next Task below.
 
 ---
 
@@ -120,23 +126,14 @@ Not scheduled, not built — just captured so they aren't lost.
 
 ## Next Task
 
-1. Decide what to do about the GitHub remote name mismatch
-   (`otisranson/silicon.git` vs. the local `Phosphor` project) — rename
-   the GitHub repo, or repoint `origin` to a newly-created `Phosphor`
-   repo. Either is a shared/external action — confirm with the user
-   before doing it.
-2. Commit the pivot: the `silicon/`/`requirements.txt` deletions, the
-   `.gitignore` simplification, the rewritten `README.md`, and the new
-   `phosphor.html` haven't been committed yet as of this session.
-3. Actually open `phosphor.html` in a browser and exercise it — nobody
-   (user or Claude) has confirmed the tokenizer, postfix conversion, gate
-   animations, and stack rendering all work correctly end-to-end yet in
-   this session. Try edge cases: empty stack `POP` (op with no operands
-   pushed yet — `sPop()` returns `0` rather than erroring, confirm that's
-   the desired behavior), deeply nested parens, stack overflow past 8
-   pushes (`sPush` clamps `sp` at `STACK_SIZE - 1`, silently overwriting
-   the top slot rather than erroring — confirm that's desired), and mixed
-   word/symbol operators (`9 XOR 14` vs `9 ^ 14`).
+Exercise `phosphor.html`'s edge cases in a browser — the screenshot
+confirms the happy path (`PUSH 3 · PUSH 8 · *`) works, but nobody has
+checked: empty-stack `POP` (op with no operands pushed yet — `sPop()`
+returns `0` rather than erroring, confirm that's the desired behavior),
+deeply nested parens, stack overflow past 8 pushes (`sPush` clamps `sp`
+at `STACK_SIZE - 1`, silently overwriting the top slot rather than
+erroring — confirm that's desired), and mixed word/symbol operators
+(`9 XOR 14` vs `9 ^ 14`).
 
 ---
 
