@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Phosphor · Stack Machine</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#070a08;color:#c8f0d4;font-family:'Share Tech Mono',monospace;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+#hdr{display:flex;justify-content:space-between;align-items:center;padding:8px 20px;border-bottom:1px solid #152a1c;flex-shrink:0;}
+#hdr .logo{color:#2aff88;font-size:13px;letter-spacing:3px;}
+#hdr .meta{font-size:10px;color:#2a6040;letter-spacing:2px;}
+#op-badge{font-size:10px;color:#2a6040;letter-spacing:2px;border:1px solid #1a3a22;padding:2px 10px;}
+#op-badge.live{color:#2aff88;border-color:#2aff88;}
+#main{display:flex;flex:1;min-height:0;}
+#gate-panel{flex:1;display:flex;flex-direction:column;padding:12px;border-right:1px solid #152a1c;min-width:0;}
+#gate-lbl{font-size:9px;color:#2a6040;letter-spacing:2px;margin-bottom:6px;flex-shrink:0;}
+#gate-canvas{flex:1;display:block;width:100%;min-height:0;}
+#stack-panel{width:260px;display:flex;flex-direction:column;padding:12px;flex-shrink:0;}
+#stack-lbl{font-size:9px;color:#2a6040;letter-spacing:2px;margin-bottom:6px;}
+#stack-cells{display:flex;flex-direction:column;gap:3px;flex:1;}
+.cell{display:flex;align-items:center;gap:6px;height:30px;}
+.cell-ptr{width:14px;font-size:11px;color:#2aff88;text-align:right;flex-shrink:0;}
+.cell-bits{display:flex;gap:2px;}
+.bit{width:17px;height:22px;display:flex;align-items:center;justify-content:center;font-size:9px;border:1px solid #0f1f14;transition:background .12s,color .12s,border-color .12s;}
+.bit.on{background:#0a3018;color:#2aff88;border-color:#1a5a30;}
+.bit.off{background:#070a08;color:#152a1c;border-color:#0f1f14;}
+.bit.ghost{background:#070a08;color:#0a1a10;border-color:#0a1a10;}
+.cell-val{font-size:10px;color:#2a6040;width:26px;text-align:right;flex-shrink:0;}
+.cell-val.live{color:#2aff88;}
+#ftr{border-top:1px solid #152a1c;padding:10px 20px;display:flex;flex-direction:column;gap:5px;flex-shrink:0;}
+#tape{font-size:9px;color:#1a5030;letter-spacing:1px;height:13px;white-space:nowrap;overflow:hidden;}
+#in-row{display:flex;align-items:center;gap:8px;}
+#prompt{color:#1a6040;font-size:14px;}
+#expr{background:none;border:none;outline:none;color:#2aff88;font-family:'Share Tech Mono',monospace;font-size:13px;flex:1;caret-color:#2aff88;}
+#expr::placeholder{color:#1a3a22;}
+#status{font-size:9px;color:#2a6040;height:13px;letter-spacing:1px;}
+</style>
+</head>
+<body>
+<div id="hdr">
+  <span class="logo">PHOSPHOR</span>
+  <span id="op-badge">IDLE</span>
+  <span class="meta">STACK MACHINE · 8-BIT</span>
+</div>
+<div id="main">
+  <div id="gate-panel">
+    <div id="gate-lbl">GATE NETWORK</div>
+    <canvas id="gate-canvas"></canvas>
+  </div>
+  <div id="stack-panel">
+    <div id="stack-lbl">MEMORY STACK</div>
+    <div id="stack-cells"></div>
+  </div>
+</div>
+<div id="ftr">
+  <div id="tape"></div>
+  <div id="in-row">
+    <span id="prompt">›</span>
+    <input id="expr" type="text" placeholder="3 + 4  then  * 2  ·  9 XOR 14  ·  CLEAR to reset" autocomplete="off" spellcheck="false">
+  </div>
+  <div id="status">READY · STACK PERSISTS BETWEEN EXPRESSIONS · TYPE CLEAR TO RESET</div>
+</div>
+<script>
+// ── Canvas ────────────────────────────────────────────────
+const CV = document.getElementById('gate-canvas');
+const CX = CV.getContext('2d');
+const STACK_SIZE = 8, BITS = 8;
+
+function syncCV() {
+  CV.width  = CV.offsetWidth  || 400;
+  CV.height = CV.offsetHeight || 300;
+}
+new ResizeObserver(syncCV).observe(CV);
+
+// ── Stack ─────────────────────────────────────────────────
+let sData = Array(STACK_SIZE).fill(null);
+let sp = -1, busy = false;
+
+function initStackDOM() {
+  const el = document.getElementById('stack-cells');
+  el.innerHTML = '';
+  for (let i = STACK_SIZE - 1; i >= 0; i--) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const ptr = document.createElement('div');
+    ptr.className = 'cell-ptr'; ptr.id = 'P' + i;
+    const bits = document.createElement('div');
+    bits.className = 'cell-bits';
+    for (let b = BITS - 1; b >= 0; b--) {
+      const bd = document.createElement('div');
+      bd.className = 'bit off'; bd.id = `B${i}_${b}`; bits.appendChild(bd);
+    }
+    const val = document.createElement('div');
+    val.className = 'cell-val'; val.id = 'V' + i;
+    cell.appendChild(ptr); cell.appendChild(bits); cell.appendChild(val);
+    el.appendChild(cell);
+  }
+}
+
+function renderStack() {
+  for (let i = 0; i < STACK_SIZE; i++) {
+    const v = sData[i];
+    document.getElementById('P' + i).textContent = (i === sp) ? '→' : '';
+    const valEl = document.getElementById('V' + i);
+    if (v !== null && v !== 'ghost') {
+      valEl.textContent = v; valEl.className = 'cell-val' + (i === sp ? ' live' : '');
+      for (let b = 0; b < BITS; b++) {
+        const bd = document.getElementById(`B${i}_${b}`);
+        bd.textContent = (v >> b) & 1;
+        bd.className = 'bit ' + (((v >> b) & 1) ? 'on' : 'off');
+      }
+    } else if (v === 'ghost') {
+      valEl.textContent = ''; valEl.className = 'cell-val';
+      for (let b = 0; b < BITS; b++) {
+        const bd = document.getElementById(`B${i}_${b}`);
+        bd.textContent = '·'; bd.className = 'bit ghost';
+      }
+    } else {
+      valEl.textContent = ''; valEl.className = 'cell-val';
+      for (let b = 0; b < BITS; b++) {
+        const bd = document.getElementById(`B${i}_${b}`);
+        bd.textContent = '0'; bd.className = 'bit off';
+      }
+    }
+  }
+}
+
+function sPush(v) { sp = Math.min(sp + 1, STACK_SIZE - 1); sData[sp] = v; renderStack(); }
+function sPop()   {
+  if (sp < 0) return 0;
+  const v = sData[sp]; sData[sp] = 'ghost'; sp--; renderStack(); return v;
+}
+
+// ── Parser ────────────────────────────────────────────────
+// word operators → internal symbol
+const WORD_OPS = { 'XOR':'^', 'AND':'&', 'OR':'|' };
+
+function tokenize(s) {
+  const ts = []; let i = 0;
+  const u = s.toUpperCase();
+  while (i < s.length) {
+    if (/\s/.test(s[i])) { i++; continue; }
+    // word operators (case-insensitive)
+    let matched = false;
+    for (const [word, sym] of Object.entries(WORD_OPS)) {
+      if (u.startsWith(word, i) && !/[A-Z]/.test(u[i + word.length] || '')) {
+        ts.push({ t: 'o', v: sym }); i += word.length; matched = true; break;
+      }
+    }
+    if (matched) continue;
+    if (/\d/.test(s[i])) {
+      let n = '';
+      while (i < s.length && /\d/.test(s[i])) n += s[i++];
+      ts.push({ t: 'n', v: +n });
+    } else if ('+-*&|^'.includes(s[i])) {
+      ts.push({ t: 'o', v: s[i++] });  // symbol fallback
+    } else if (s[i] === '(') { ts.push({ t: '(' }); i++; }
+    else if (s[i] === ')') { ts.push({ t: ')' }); i++; }
+    else i++;
+  }
+  return ts;
+}
+const PREC = { '+':1, '-':1, '*':2, '&':0, '|':0, '^':0 };
+
+function toPostfix(ts) {
+  const out = [], ops = [];
+  for (const t of ts) {
+    if (t.t === 'n') { out.push(t); }
+    else if (t.t === 'o') {
+      while (ops.length && ops[ops.length-1].t === 'o' &&
+             PREC[ops[ops.length-1].v] >= PREC[t.v]) out.push(ops.pop());
+      ops.push(t);
+    } else if (t.t === '(') { ops.push(t); }
+    else if (t.t === ')') {
+      while (ops.length && ops[ops.length-1].t !== '(') out.push(ops.pop());
+      ops.pop();
+    }
+  }
+  while (ops.length) out.push(ops.pop());
+  return out;
+}
+function buildInstrs(pf) {
+  return pf.map(t => t.t === 'n' ? { op: 'PUSH', val: t.v } : { op: t.v });
+}
+
+// ── Draw helpers (always read CV.width/height fresh) ──────
+function clr() {
+  CX.fillStyle = '#070a08';
+  CX.fillRect(0, 0, CV.width, CV.height);
+}
+
+function wire(x1, y1, x2, y2, on, t=1) {
+  const ct = Math.min(1, Math.max(0, t));
+  const ex = on && ct < 1 ? x1 + (x2-x1)*ct : x2;
+  const ey = on && ct < 1 ? y1 + (y2-y1)*ct : y2;
+  CX.beginPath(); CX.moveTo(x1, y1); CX.lineTo(ex, ey);
+  CX.strokeStyle = on ? (ct >= 1 ? '#2aff88' : '#0e4525') : '#0d1f12';
+  CX.lineWidth = 1.5; CX.stroke();
+  if (on && ct < 1 && ct > 0) {
+    CX.beginPath(); CX.arc(ex, ey, 3, 0, Math.PI*2);
+    CX.fillStyle = '#2aff88'; CX.fill();
+  }
+}
+
+function carryWire(x1, y1, x2, y2, on, t=1) {
+  const ct = Math.min(1, Math.max(0, t));
+  const ex = on && ct < 1 ? x1+(x2-x1)*ct : x2;
+  const ey = on && ct < 1 ? y1+(y2-y1)*ct : y2;
+  CX.save(); CX.setLineDash([4,3]);
+  CX.beginPath(); CX.moveTo(x1,y1); CX.lineTo(ex,ey);
+  CX.strokeStyle = on ? (ct>=1 ? '#ff8c2a':'#3a1a06') : '#1a1006';
+  CX.lineWidth=1.5; CX.stroke(); CX.restore();
+  if (on && ct<1 && ct>0) {
+    CX.beginPath(); CX.arc(ex,ey,3,0,Math.PI*2);
+    CX.fillStyle='#ff8c2a'; CX.fill();
+  }
+}
+
+// Gate symbols — always box-based for reliability
+function gate(x, y, w, h, label, on) {
+  CX.fillStyle   = on ? '#0a2618' : '#0c1810';
+  CX.strokeStyle = on ? '#2aff88' : '#1e3a28';
+  CX.lineWidth   = 1;
+  CX.beginPath(); CX.rect(x, y, w, h); CX.fill(); CX.stroke();
+  CX.fillStyle = on ? '#2aff88' : '#2a6040';
+  CX.font = '8px "Share Tech Mono",monospace';
+  CX.textAlign = 'center';
+  CX.fillText(label, x + w/2, y + h/2 + 3);
+}
+
+function txt(s, x, y, bright, size=9) {
+  CX.fillStyle = bright ? '#2aff88' : '#2a6040';
+  CX.font = `${size}px "Share Tech Mono",monospace`;
+  CX.textAlign = 'center'; CX.fillText(s, x, y);
+}
+function txtL(s, x, y, c='#1a5030', size=9) {
+  CX.fillStyle = c; CX.font = `${size}px "Share Tech Mono",monospace`;
+  CX.textAlign = 'left'; CX.fillText(s, x, y);
+}
+function txtR(s, x, y, c='#1a5030', size=9) {
+  CX.fillStyle = c; CX.font = `${size}px "Share Tech Mono",monospace`;
+  CX.textAlign = 'right'; CX.fillText(s, x, y);
+}
+
+// ── Layout: bitwise op (4 bits shown) ────────────────────
+function makeBitwiseLayout(opSym, a, b, result) {
+  const N = 4;
+  const GW = 48, GH = 24;
+  const opLabel = opSym==='^'?'XOR' : opSym==='&'?'AND' : opSym==='|'?'OR' : opSym;
+  const aM = a & 0xF, bM = b & 0xF, rM = result & 0xF;
+
+  const steps = [
+    { phase:'inputs',   dur:320 },
+    { phase:'pulse-in', dur:700 },
+    { phase:'fired',    dur:300 },
+    { phase:'pulse-out',dur:700 },
+    { phase:'done',     dur:700 },
+  ];
+
+  function render(phase, t) {
+    clr();
+    // recompute layout from current canvas size every frame
+    const W = CV.width, H = CV.height;
+    const rowH  = Math.min(58, (H - 80) / N);
+    const y0    = (H - N * rowH) / 2 + rowH / 2;
+    const inX   = Math.max(50, W * 0.12);
+    const gX    = W * 0.42;
+    const outX  = gX + GW + 44;
+
+    const inOn  = phase !== 'inputs';
+    const gOn   = phase === 'fired' || phase === 'pulse-out' || phase === 'done';
+    const outOn = phase === 'pulse-out' || phase === 'done';
+    const inT   = phase === 'pulse-in'  ? t : (inOn  ? 1 : 0);
+    const outT  = phase === 'pulse-out' ? t : (outOn ? 1 : 0);
+
+    txtL(`A = ${a}`, 12, 16); txtL(`B = ${b}`, 12, 30);
+    txtR(opLabel, W - 12, 16, '#1a5030', 10);
+
+    for (let i = 0; i < N; i++) {
+      const bit = N - 1 - i;
+      const ry  = y0 + i * rowH;
+      const aV  = (aM >> bit) & 1;
+      const bV  = (bM >> bit) & 1;
+      const rV  = (rM >> bit) & 1;
+
+      // input labels
+      txt(`A${bit}`, inX - 20, ry - 5, inOn);
+      txt(String(aV), inX - 4,  ry - 5, inOn && aV===1);
+      txt(`B${bit}`, inX - 20, ry + 11, inOn);
+      txt(String(bV), inX - 4,  ry + 11, inOn && bV===1);
+
+      // wires in
+      wire(inX + 4, ry - 6, gX, ry - 6, inOn, inT);
+      wire(inX + 4, ry + 8, gX, ry + 8, inOn, inT);
+
+      // gate
+      gate(gX, ry - GH/2, GW, GH, opLabel, gOn);
+
+      // wire out
+      wire(gX + GW, ry, outX, ry, outOn, outT);
+
+      // result bit
+      if (outOn) txt(String(rV), outX + 12, ry + 4, (phase==='done') && rV===1);
+    }
+
+    // final result
+    if (phase === 'done') {
+      CX.fillStyle = '#2aff88'; CX.font = 'bold 15px "Share Tech Mono",monospace';
+      CX.textAlign = 'center';
+      CX.fillText(`= ${result}`, outX + 12, H - 16);
+    }
+
+    // bit header
+    CX.fillStyle = '#152a1c'; CX.font = '9px "Share Tech Mono",monospace';
+    CX.textAlign = 'center';
+    CX.fillText('OUT', outX + 12, y0 - rowH * 0.6);
+  }
+
+  return { steps, render };
+}
+
+// ── Layout: ripple-carry adder (4 bits) ───────────────────
+function makeAdderLayout(a, b, result) {
+  const N = 4;
+  const CW = 64, CH = 36, GAP = 10;
+
+  // precompute carries
+  const carries = [];
+  let c = 0;
+  for (let i = 0; i < N; i++) {
+    carries.push(c);
+    const aB = (a >> i) & 1, bB = (b >> i) & 1;
+    c = ((aB + bB + c) >> 1) & 1;
+  }
+
+  const steps = [
+    { phase:'inputs',    dur:400 },
+    { phase:'pulse-in',  dur:900 },
+    { phase:'fired',     dur:360 },
+    { phase:'pulse-out', dur:900 },
+    { phase:'done',      dur:700 },
+  ];
+
+  function render(phase, t) {
+    clr();
+    const W = CV.width, H = CV.height;
+    const totalW = N * (CW + GAP) - GAP;
+    const x0     = (W - totalW) / 2;
+    const cellY  = H / 2 - CH / 2;
+
+    txtL(`A = ${a}`, 12, 16); txtL(`B = ${b}`, 12, 30);
+    txtR('ADD · ripple carry', W - 12, 16, '#1a5030', 9);
+
+    for (let i = 0; i < N; i++) {
+      // display rightmost (LSB) on the right
+      const col = N - 1 - i;
+      const fx  = x0 + col * (CW + GAP);
+      const aV  = (a >> i) & 1;
+      const bV  = (b >> i) & 1;
+      const rV  = (result >> i) & 1;
+
+      // staggered activation (LSB first = right to left)
+      const frac    = phase === 'pulse-in'  ? Math.max(0, Math.min(1, t * N - (N-1-col))) : 1;
+      const outFrac = phase === 'pulse-out' ? Math.max(0, Math.min(1, t * N - (N-1-col))) : 1;
+      const isFired = frac >= 1 || phase === 'fired' || phase === 'pulse-out' || phase === 'done';
+      const isOut   = outFrac >= 1 || phase === 'done';
+
+      // FA cell
+      CX.fillStyle   = isFired ? '#0a2016' : '#0c1810';
+      CX.strokeStyle = isFired ? '#2aff88' : '#1e3a28';
+      CX.lineWidth = 1;
+      CX.beginPath(); CX.rect(fx, cellY, CW, CH); CX.fill(); CX.stroke();
+      CX.fillStyle = isFired ? '#2aff88' : '#2a6040';
+      CX.font = '9px "Share Tech Mono",monospace'; CX.textAlign = 'center';
+      CX.fillText('FULL ADDER', fx + CW/2, cellY + 14);
+      CX.fillStyle = isFired ? '#1a5030' : '#152a1c';
+      CX.fillText(`bit ${i}`, fx + CW/2, cellY + 27);
+
+      // input wires
+      const inOn = phase !== 'inputs';
+      const wt   = phase === 'pulse-in' ? frac : (inOn ? 1 : 0);
+      wire(fx + CW/2 - 10, cellY - 14, fx + CW/2 - 10, cellY, inOn, wt);
+      wire(fx + CW/2 + 10, cellY - 14, fx + CW/2 + 10, cellY, inOn, wt);
+      txt(String(aV), fx + CW/2 - 10, cellY - 17, inOn && aV===1);
+      txt(String(bV), fx + CW/2 + 10, cellY - 17, inOn && bV===1);
+
+      // output wire
+      wire(fx + CW/2, cellY + CH, fx + CW/2, cellY + CH + 14, isOut, outFrac);
+      if (isOut) txt(String(rV), fx + CW/2, cellY + CH + 26, (phase === 'done') && rV===1);
+
+      // carry wire to left neighbour (higher bit)
+      if (col > 0) {
+        const nx = x0 + (col - 1) * (CW + GAP);
+        const cOn = isFired;
+        const ct  = phase === 'pulse-out' ? Math.max(0, Math.min(1, t * N - (N-1-col))) : (cOn ? 1 : 0);
+        carryWire(fx, cellY + CH/2, nx + CW, cellY + CH/2, cOn, ct);
+        if (cOn) {
+          CX.fillStyle = '#ff8c2a'; CX.font = '8px "Share Tech Mono",monospace';
+          CX.textAlign = 'center';
+          CX.fillText('C', fx - GAP/2, cellY + CH/2 - 5);
+        }
+      }
+
+      // column label
+      CX.fillStyle = '#1a3a22'; CX.font = '9px "Share Tech Mono",monospace';
+      CX.textAlign = 'center';
+      CX.fillText(`A${i}  B${i}`, fx + CW/2, cellY - 28);
+    }
+
+    if (phase === 'done') {
+      CX.fillStyle = '#2aff88'; CX.font = 'bold 14px "Share Tech Mono",monospace';
+      CX.textAlign = 'center';
+      CX.fillText(`= ${result}`, W/2, cellY + CH + 48);
+    }
+  }
+
+  return { steps, render };
+}
+
+// ── Layout: PUSH splash ───────────────────────────────────
+function makePushLayout(val) {
+  const steps = [{ phase:'show', dur:480 }];
+  function render() {
+    clr();
+    const W = CV.width, H = CV.height;
+    CX.fillStyle = '#1a3a22'; CX.font = '10px "Share Tech Mono",monospace'; CX.textAlign='center';
+    CX.fillText('PUSH', W/2, H/2 - 30);
+    CX.fillStyle = '#2aff88'; CX.font = 'bold 34px "Share Tech Mono",monospace';
+    CX.fillText(String(val), W/2, H/2 + 6);
+    CX.fillStyle = '#1a5030'; CX.font = '13px "Share Tech Mono",monospace';
+    CX.fillText((val & 0xFF).toString(2).padStart(8,'0'), W/2, H/2 + 30);
+    CX.fillStyle = '#152a1c'; CX.font = '9px "Share Tech Mono",monospace';
+    CX.fillText('→ STACK', W/2, H/2 + 48);
+  }
+  return { steps, render };
+}
+
+// ── Animation engine ──────────────────────────────────────
+function animate(layout, onDone) {
+  const { steps, render } = layout;
+  let idx = 0, t0 = null;
+  function tick(now) {
+    try {
+      if (t0 === null) t0 = now;
+      const step = steps[idx];
+      const t = Math.min(1, (now - t0) / step.dur);
+      render(step.phase, t);
+      if (t >= 1) {
+        idx++; t0 = now;
+        if (idx >= steps.length) { onDone && onDone(); return; }
+      }
+      requestAnimationFrame(tick);
+    } catch(e) {
+      console.error('Animation error:', e);
+      onDone && onDone();
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+// ── Execution ─────────────────────────────────────────────
+function setStatus(s) { document.getElementById('status').textContent = s; }
+function setBadge(s, on) {
+  const b = document.getElementById('op-badge');
+  b.textContent = s; b.className = on ? 'live' : '';
+}
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+async function run(instrs) {
+  busy = true;
+  document.getElementById('tape').textContent =
+    instrs.map(i => i.op==='PUSH' ? `PUSH ${i.val}` : i.op).join('  ·  ');
+
+  for (const ins of instrs) {
+    if (ins.op === 'PUSH') {
+      setBadge('PUSH', true);
+      setStatus(`PUSH ${ins.val}  →  stack[${sp+1}]`);
+      await new Promise(r => animate(makePushLayout(ins.val), r));
+      sPush(ins.val & 0xFF);
+      await wait(120);
+    } else {
+      const b = sPop(), a = sPop();
+      let res, opName;
+      switch (ins.op) {
+        case '+': res = (a + b)       & 0xFF; opName = 'ADD'; break;
+        case '-': res = (a - b + 256) & 0xFF; opName = 'SUB'; break;
+        case '*': res = (a * b)       & 0xFF; opName = 'MUL'; break;
+        case '&': res =  a & b;               opName = 'AND'; break;
+        case '|': res =  a | b;               opName = 'OR';  break;
+        case '^': res =  a ^ b;               opName = 'XOR'; break;
+        default:  res = 0;                    opName = '???';
+      }
+      setBadge(opName, true);
+      setStatus(`${opName}: ${a} ${ins.op} ${b} = ${res}`);
+
+      let layout;
+      if (ins.op === '+' || ins.op === '-') layout = makeAdderLayout(a, b, res);
+      else layout = makeBitwiseLayout(ins.op, a, b, res);
+
+      await new Promise(r => animate(layout, r));
+      sPush(res);
+      await wait(160);
+    }
+  }
+
+  setBadge('DONE', false);
+  setStatus(`DONE  ·  RESULT = ${sData[sp]}  ·  stack depth = ${sp + 1}`);
+  busy = false;
+}
+
+// ── Input ─────────────────────────────────────────────────
+document.getElementById('expr').addEventListener('keydown', async e => {
+  if (e.key !== 'Enter' || busy) return;
+  const s = e.target.value.trim();
+  if (!s) return;
+  if (s.toUpperCase() === 'CLEAR') {
+    sData = Array(STACK_SIZE).fill(null); sp = -1; renderStack();
+    e.target.value = '';
+    setStatus('STACK CLEARED · TYPE TO CONTINUE');
+    setBadge('IDLE', false); clr();
+    CX.fillStyle = '#152a1c'; CX.font = '10px "Share Tech Mono",monospace';
+    CX.textAlign = 'center';
+    CX.fillText('GATE NETWORK IDLE', CV.width/2, CV.height/2);
+    return;
+  }
+  try {
+    const instrs = buildInstrs(toPostfix(tokenize(s)));
+    if (!instrs.length) return;
+    e.target.value = '';
+    await run(instrs);
+  } catch (err) {
+    console.error(err);
+    setStatus('ERROR · CHECK YOUR EXPRESSION');
+    setBadge('ERR', false);
+    busy = false;
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────
+initStackDOM(); renderStack();
+// defer initial render until after layout
+requestAnimationFrame(() => {
+  syncCV(); clr();
+  CX.fillStyle = '#152a1c'; CX.font = '10px "Share Tech Mono",monospace';
+  CX.textAlign = 'center';
+  CX.fillText('GATE NETWORK IDLE', CV.width/2, CV.height/2);
+});
+</script>
+</body>
+</html>

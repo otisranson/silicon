@@ -1,56 +1,58 @@
-# silicon
+# Phosphor
 
-A real-time CPU die visualizer for Linux, styled like a silicon die shot.
-Each core is rendered as a grid of animated "transistors" that shift color
-with live load, laid out on a die outline with a ring bus, L3 cache strip,
-and memory controller. Click a core to zoom in and see its live load and
-frequency history as sparklines.
+A single-file, browser-based stack-machine calculator. Type an expression,
+watch it get tokenized into postfix instructions, then executed one op at
+a time against an 8-slot, 8-bit memory stack — with each `PUSH` and each
+arithmetic/bitwise operation animated as a live gate-network diagram
+(ripple-carry adder for `+`/`-`, a bitwise gate row for `AND`/`OR`/`XOR`).
+Styled like a green-phosphor terminal.
 
-Built with Python, GTK4 (PyGObject), and Cairo. No web view, no Electron —
-native GTK4 window, drawn frame by frame on a `Gtk.DrawingArea`.
+No build step, no dependencies, no server. It's one HTML file with inline
+CSS and vanilla JS/Canvas.
 
-## Install
-
-```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0
-pip install -r requirements.txt
-```
+![Phosphor mid-run: PUSH 3, PUSH 8, multiply, result 24 on the stack](screenshots/screenshot.png)
 
 ## Run
 
-```bash
-python3 silicon/silicon.py
+Open `phosphor.html` in a browser. That's it.
+
+## Use
+
+Type an expression into the input at the bottom and press Enter:
+
+```
+3 + 4
+* 2
+9 XOR 14
+CLEAR
 ```
 
-## Controls
-
-- **Click a core** — zoom in on it (live load/freq sparklines, temp if available)
-- **Escape** or **click outside the grid** — back to the overview
-- **Ctrl+T** — toggle always-on-top
-- **Ctrl+Q** — quit
-
-## Known limitations
-
-- **Always-on-top**: GTK4 removed `Gtk.Window.set_keep_above()` — Wayland
-  doesn't expose a portable window-stacking API the way X11 did. Ctrl+T
-  is wired up and will work if the method happens to be available on your
-  GDK backend, but on stock GNOME/Wayland it's currently a no-op. A real
-  floating overlay would need [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell).
-- **Temperature-to-core mapping**: `psutil.sensors_temperatures()["coretemp"]`
-  entries are matched to cores by index, which isn't guaranteed to line up
-  with logical core ordering — most systems expose one temperature per
-  physical core, not per thread.
-- Per-core frequency falls back to a single system-wide reading, applied
-  to every core, on machines where `psutil.cpu_freq(percpu=True)` isn't
-  supported.
+- Supports `+ - *` (arithmetic, wraps to 8-bit) and `AND`/`OR`/`XOR`
+  (also accepts `& | ^`), plus parentheses and operator precedence.
+- The stack **persists between expressions** — each result is pushed and
+  left there, so a later expression with no operands consumes whatever's
+  on top of the stack.
+- Type `CLEAR` to reset the stack.
+- Each op animates through the gate network panel on the left (inputs →
+  pulse in → gate fires → pulse out → result) before the result lands on
+  the stack panel on the right, shown as ptr/bits/decimal per cell.
 
 ## Layout
 
 ```
-silicon/
-  silicon.py   — GTK4 app, window, input handling, render loop
-  renderer.py  — all Cairo drawing (die, cores, ring bus, L3, zoom, sparklines)
-  metrics.py   — psutil polling, lerp smoothing, per-transistor noise field
-LICENSE        — Apache 2.0
-requirements.txt
+phosphor.html      — everything: markup, styles, and all JS (tokenizer,
+                      postfix conversion, stack machine, Canvas gate-network
+                      renderer, animation engine)
+screenshots/        — screenshot.png, referenced above
+LICENSE             — GPLv3
 ```
+
+## Known limitations
+
+- Stack is fixed at 8 slots, 8-bit values (arithmetic wraps mod 256).
+- Only 4 bits of each operand are shown in the bitwise gate-row diagram
+  and only 4 bits in the ripple-carry adder, even though stack values are
+  8-bit — this is a deliberate legibility tradeoff, not a bug.
+- No persistence — refreshing the page clears the stack.
+- Not signed-integer aware; subtraction underflow wraps via two's
+  complement mod 256 rather than showing negative numbers.
